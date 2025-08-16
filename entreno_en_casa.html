@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<title>Entreno en casa</title>
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<style>
+  body{margin:0;background:#f6f7ff;font-family:-apple-system,system-ui,sans-serif;color:#0f172a}
+  .wrap{max-width:480px;margin:0 auto;padding:16px}
+  .card{background:#fff;border-radius:16px;padding:16px;box-shadow:0 8px 20px rgba(0,0,0,.08);margin:12px 0}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .muted{color:#64748b}
+  .progress{height:12px;background:#e5e7eb;border-radius:999px;overflow:hidden}
+  .progress>div{height:100%;background:#4f46e5;width:0%}
+  .btn{height:48px;border-radius:14px;border:1px solid #e5e7eb;background:#fff;padding:0 16px;font-weight:600}
+  .btn.primary{background:#4f46e5;color:#fff;border-color:#4f46e5}
+  .btn.full{width:100%}
+  .ok{color:#16a34a;font-weight:700}
+  .warn{color:#dc2626}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card row"><h1 style="margin:0">Entreno en casa</h1><button id="reset-day" class="btn">Reset día</button></div>
+
+    <div class="card">
+      <div class="row">
+        <div style="font-weight:700">Progreso del circuito</div>
+        <div class="muted"><span id="done-count">0</span>/<span id="total-count">9</span> series</div>
+      </div>
+      <div class="progress" style="margin-top:8px"><div id="progress-total"></div></div>
+      <div id="diag" class="muted" style="margin-top:6px;font-size:13px">Si no ves ejercicios abajo, pulsa “Forzar carga”.</div>
+      <button id="force" class="btn" style="margin-top:10px">Forzar carga</button>
+    </div>
+
+    <div id="exercises"></div>
+
+    <div class="card">
+      <button id="finish" class="btn full" disabled>Termina todas las series para completar</button>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const PLAN=[{key:"flexiones",nombre:"Flexiones",reps:15,series:3},{key:"sentadillas",nombre:"Sentadillas",reps:10,series:3},{key:"dominadas",nombre:"Dominadas",reps:3,series:3}];
+  const REST_SECONDS=45;
+  const $=s=>document.querySelector(s);
+  const el={ex:$("#exercises"),done:$("#done-count"),total:$("#total-count"),bar:$("#progress-total"),finish:$("#finish"),reset:$("#reset-day"),force:$("#force"),diag:$("#diag")};
+
+  function todayKey(){return new Date().toISOString().slice(0,10)}
+  function load(k,def){try{const r=localStorage.getItem(k);return r?JSON.parse(r):def}catch{return def}}
+  function save(k,v){localStorage.setItem(k,JSON.stringify(v))}
+
+  const storageKey="ejercicio:"+todayKey();
+  const initial=Object.fromEntries(PLAN.map(e=>[e.key,{seriesHechas:0}]));
+  let state=load(storageKey,initial);
+  let restActive=false, restRemaining=0, restTimer=null;
+
+  el.total.textContent=PLAN.reduce((a,e)=>a+e.series,0);
+
+  function doneSeries(){return PLAN.reduce((s,e)=>s+(state[e.key]?.seriesHechas||0),0)}
+  function renderTotals(){
+    const done=doneSeries(), total=Number(el.total.textContent);
+    el.done.textContent=done; el.bar.style.width=(done/total)*100+"%";
+    const allDone=done>=total; el.finish.disabled=!allDone;
+    el.finish.textContent=allDone?"✅ Entrenamiento completado":"Termina todas las series para completar";
+    save(storageKey,state);
+  }
+
+  function startRest(){
+    restActive=true; restRemaining=REST_SECONDS;
+    clearInterval(restTimer);
+    restTimer=setInterval(()=>{
+      restRemaining--;
+      if(restRemaining<=0){ restActive=false; clearInterval(restTimer); if(navigator.vibrate){try{navigator.vibrate(40)}catch{}} }
+      render();
+    },1000);
+  }
+
+  function render(){
+    el.ex.innerHTML="";
+    PLAN.forEach(ej=>{
+      const hechas=state[ej.key]?.seriesHechas||0, comp=hechas>=ej.series;
+      const card=document.createElement("div"); card.className="card";
+      card.innerHTML=`
+        <div class="row" style="align-items:flex-start">
+          <div><div style="font-weight:700;font-size:18px">${ej.nombre}</div><div class="muted">${ej.series}×${ej.reps} reps</div></div>
+          ${comp?'<div class="ok">✔ Completado</div>':`<div class="muted">${hechas}/${ej.series} series</div>`}
+        </div>
+        <div class="progress" style="margin-top:8px"><div style="width:${(hechas/ej.series)*100}%"></div></div>
+        ${restActive?`<div class="warn" style="margin-top:6px">Descanso: ${restRemaining}s</div>`:""}
+        <div class="row" style="margin-top:10px;gap:8px">
+          <button class="btn ${(!comp&&!restActive)?'primary':''}" data-action="tick" data-key="${ej.key}" ${comp||restActive?"disabled":""}>${comp?"Series completas":`Marcar serie ${Math.min(ej.series,hechas+1)}/${ej.series}`}</button>
+          <button class="btn" data-action="reset" data-key="${ej.key}">Reset</button>
+        </div>`;
+      el.ex.appendChild(card);
+    });
+    renderTotals();
+    if(el.diag) el.diag.textContent="OK: ejercicios cargados";
+  }
+
+  // Eventos
+  el.ex.addEventListener("click",e=>{
+    const b=e.target.closest("button"); if(!b) return;
+    const k=b.getAttribute("data-key"), a=b.getAttribute("data-action");
+    if(a==="tick"){ const cur=state[k]?.seriesHechas||0, tgt=PLAN.find(x=>x.key===k)?.series||3;
+      if(cur<tgt){ state[k]={seriesHechas:cur+1}; startRest(); } render();
+    }else if(a==="reset"){ state[k]={seriesHechas:0}; render(); }
+  });
+  el.reset.addEventListener("click",()=>{ state=JSON.parse(JSON.stringify(initial)); clearInterval(restTimer); restActive=false; restRemaining=0; render(); });
+  el.finish.addEventListener("click",()=>alert("¡Buen trabajo!"));
+  el.force.addEventListener("click",render);
+
+  // Primer render
+  render();
+})();
+</script>
+</body>
+</html>
